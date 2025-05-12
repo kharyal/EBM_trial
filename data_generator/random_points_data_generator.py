@@ -1,0 +1,96 @@
+'''
+this file generates synthetic data for training EBM:
+5 random points in a 2D (10x10) space:
+    each point has 3 features: x, y, and colour: {0:red, 1:green, 2:blue}
+1 observer at random position in the 2D space
+
+a set of labels for <concepts object>:
+    0: observer is close (<3 units)
+    1: observer is far (>5 units)
+    2: observer is to the right
+    3: observer is to the left
+    4: observer is above
+    5: observer is below
+
+for each <concept object>, stores a set of <concept subjects>:
+    0: red
+    1: green
+    2: blue
+
+for example:
+if a red point and a green point are close to the observer, a set of labels are attached: {[0,0], [0,1]}
+'''
+
+import os
+import numpy as np
+import random
+import pickle
+import tqdm
+
+COLOURS = ['red', 'green', 'blue']
+
+
+class RandomPointsDataGenerator:
+    def __init__(self, data_directory, data_file, data_size=1000, num_points=5):
+        self.data_directory = data_directory
+        self.data_file = data_file
+        self.data_size = data_size
+        self.num_points = num_points
+        self.data_and_labels = []
+
+    def generate_data(self):
+        for _ in tqdm.tqdm(range(self.data_size), desc="Generating data", unit="data"):
+            # Generate random points
+            points = []
+            for _ in range(self.num_points):
+                x = random.uniform(0, 10)
+                y = random.uniform(0, 10)
+                colour = random.choice(np.arange(len(COLOURS)))
+                points.append([x, y, colour])
+            points = np.array(points)
+            # Generate random observer position
+            observer_x = random.uniform(0, 10)
+            observer_y = random.uniform(0, 10)
+            observer = np.array([observer_x, observer_y])
+            # Generate labels
+            labels = []
+            for i in range(self.num_points):
+                point = points[i]
+                distance = np.linalg.norm(point[:2] - observer)
+                if distance < 3:
+                    labels.append([0, point[2]])
+                elif distance > 5:
+                    labels.append([1, point[2]])
+                if point[0] < observer[0]:
+                    labels.append([2, point[2]])
+                elif point[0] > observer[0]:
+                    labels.append([3, point[2]])
+                if point[1] < observer[1]:
+                    labels.append([4, point[2]])
+                elif point[1] > observer[1]:
+                    labels.append([5, point[2]])
+            # Store data and labels
+            # add small noise to the labels
+            labels = np.array(labels)
+            noise = np.random.normal(0, 0.1, labels.shape)
+            # pick one unique labels
+            labels = np.unique(labels, axis=0)
+            # labels = labels + noise
+            # self.data_and_labels.append((points, observer, labels))
+            for label in labels:
+                self.data_and_labels.append((points, observer, label))
+        # Save data and labels to file
+        os.makedirs(self.data_directory, exist_ok=True)
+        with open(os.path.join(self.data_directory, self.data_file), 'wb') as f:
+            pickle.dump(self.data_and_labels, f)
+        print(f"Data saved to {os.path.join(self.data_directory, self.data_file)}")
+
+    
+if __name__ == "__main__":
+    data_directory = "../data"
+    data_file = "random_points_data.pkl"
+    data_size = 10000
+    num_points = 5
+
+    generator = RandomPointsDataGenerator(data_directory, data_file, data_size, num_points)
+    generator.generate_data()
