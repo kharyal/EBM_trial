@@ -24,6 +24,7 @@ class ConceptEBMTrainer:
         self.args = args
         self.buffer = Buffer(args.buffer_size)
         self.viz_data_generator = RandomPointsDataGenerator(None, None, 1, 5)
+        self.viz_data = self.viz_data_generator.generate_data(save=False)
 
     def langevin(self, neg, over_concepts = True):
         xs, concept = neg
@@ -154,44 +155,43 @@ class ConceptEBMTrainer:
         '''
             use the viz data to plot the energy of the model on a grid by placing the observer at each point
         '''
-        viz_data = self.viz_data_generator.generate_data(save=False)
-        viz_data = viz_data[0]
-        points, _, label = viz_data
-        human_readable_concept = self.viz_data_generator.decode_concept(label)
-        points = torch.tensor(points, dtype=torch.float32).to(self.device)
-        label = torch.tensor(label, dtype=torch.float32).to(self.device).unsqueeze(0)
+        for i, viz_data in enumerate(self.viz_data):
+            points, _, label = viz_data
+            human_readable_concept = self.viz_data_generator.decode_concept(label)
+            points = torch.tensor(points, dtype=torch.float32).to(self.device)
+            label = torch.tensor(label, dtype=torch.float32).to(self.device).unsqueeze(0)
 
-        grid_xmin, grid_xmax, grid_ymin, grid_ymax = 0, 10, 0, 10
-        num_samples = 20
-        x = np.linspace(grid_xmin, grid_xmax, num_samples)
-        y = np.linspace(grid_ymin, grid_ymax, num_samples)
-        xx, yy = np.meshgrid(x, y)
-        energies = np.zeros((num_samples, num_samples))
-        # for each point in the grid, place the observer at that point and calculate the energy
-        grid_points = np.array([[xx[i, j], yy[i, j]] for i in range(num_samples) for j in range(num_samples)])
-        grid_points = torch.tensor(grid_points, dtype=torch.float32).to(self.device)
-        for idx, gp in enumerate(grid_points):
-            points_ = points.clone()
-            points_[..., :2] = points[...,:2] - gp
-            points_ = points_.unsqueeze(0)
-            energy = self.model(points_, label)
-            gp = gp.cpu().numpy()
-            energies[idx // num_samples, idx % num_samples] = energy.detach().cpu().numpy()
+            grid_xmin, grid_xmax, grid_ymin, grid_ymax = 0, 10, 0, 10
+            num_samples = 20
+            x = np.linspace(grid_xmin, grid_xmax, num_samples)
+            y = np.linspace(grid_ymin, grid_ymax, num_samples)
+            xx, yy = np.meshgrid(x, y)
+            energies = np.zeros((num_samples, num_samples))
+            # for each point in the grid, place the observer at that point and calculate the energy
+            grid_points = np.array([[xx[i, j], yy[i, j]] for i in range(num_samples) for j in range(num_samples)])
+            grid_points = torch.tensor(grid_points, dtype=torch.float32).to(self.device)
+            for idx, gp in enumerate(grid_points):
+                points_ = points.clone()
+                points_[..., :2] = points[...,:2] - gp
+                points_ = points_.unsqueeze(0)
+                energy = self.model(points_, label)
+                gp = gp.cpu().numpy()
+                energies[idx // num_samples, idx % num_samples] = energy.detach().cpu().numpy()
 
-        # plot the energy
-        # plt.imshow(energies, extent=(grid_xmin, grid_xmax, grid_ymin, grid_ymax), origin='lower', aspect='auto')
-        # plot the points with their respective colours
-        col = np.array(COLOURS)
-        c = col[points[..., 2].cpu().numpy().astype(int)]
-        plt.scatter(points[..., 0].cpu().numpy(), points[..., 1].cpu().numpy(), c=c)
-        plt.imshow(energies, extent=(grid_xmin, grid_xmax, grid_ymin, grid_ymax), origin='lower', aspect='auto', alpha=0.5)
-        plt.colorbar()
-        plt.title(f"{human_readable_concept}")
-        plt.xlabel("X")
-        plt.ylabel("Y")
-        plt.savefig(f"epoch_{epoch}_batch_{batch}.png")
-        plt.clf()
-        plt.close()
+            # plot the energy
+            # plt.imshow(energies, extent=(grid_xmin, grid_xmax, grid_ymin, grid_ymax), origin='lower', aspect='auto')
+            # plot the points with their respective colours
+            col = np.array(COLOURS)
+            c = col[points[..., 2].cpu().numpy().astype(int)]
+            plt.scatter(points[..., 0].cpu().numpy(), points[..., 1].cpu().numpy(), c=c)
+            plt.imshow(energies, extent=(grid_xmin, grid_xmax, grid_ymin, grid_ymax), origin='lower', aspect='auto', alpha=0.5)
+            plt.colorbar()
+            plt.title(f"{human_readable_concept}")
+            plt.xlabel("X")
+            plt.ylabel("Y")
+            plt.savefig(f"viz/epoch_{epoch}_batch_{batch}_{i}.png")
+            plt.clf()
+            plt.close()
         
 
 
