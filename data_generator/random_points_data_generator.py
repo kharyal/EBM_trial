@@ -38,7 +38,30 @@ class RandomPointsDataGenerator:
         self.num_points = num_points
         self.data_and_labels = []
 
-    def generate_data(self):
+    def decode_concept(self, concept):
+        # Decode the concept into a human-readable format
+        concept_str = ""
+        concept_object = int(concept[0])
+        concept_subject = int(concept[1])
+        colour = COLOURS[concept_subject]
+        if concept_object == 0:
+            concept_str = f"Observer is close to {colour} point"
+        elif concept_object == 1:
+            concept_str = f"Observer is far from {colour} point"
+        elif concept_object == 2:
+            concept_str = f"Observer is to the right of {colour} point"
+        elif concept_object == 3:
+            concept_str = f"Observer is to the left of {colour} point"
+        elif concept_object == 4:
+            concept_str = f"Observer is above {colour} point"
+        elif concept_object == 5:
+            concept_str = f"Observer is below {colour} point"
+        else:
+            concept_str = "Unknown concept"
+        
+        return concept_str
+
+    def generate_data(self, save=True):
         for _ in tqdm.tqdm(range(self.data_size), desc="Generating data", unit="data"):
             # Generate random points
             points = []
@@ -80,11 +103,14 @@ class RandomPointsDataGenerator:
             for label in labels:
                 self.data_and_labels.append((points, observer, label))
         # Save data and labels to file
-        os.makedirs(self.data_directory, exist_ok=True)
-        with open(os.path.join(self.data_directory, self.data_file), 'wb') as f:
-            pickle.dump(self.data_and_labels, f)
-        print(f"Data saved to {os.path.join(self.data_directory, self.data_file)}")
+        if save:
+            os.makedirs(self.data_directory, exist_ok=True)
+            with open(os.path.join(self.data_directory, self.data_file), 'wb') as f:
+                pickle.dump(self.data_and_labels, f)
+            print(f"Data saved to {os.path.join(self.data_directory, self.data_file)}")
 
+        else:
+            return self.data_and_labels
     
 if __name__ == "__main__":
     data_directory = "../data"

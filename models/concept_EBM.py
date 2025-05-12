@@ -8,7 +8,7 @@ takes a set of 5 points and a concept as input, outputs the energy
 '''
 
 class ConceptEBM(nn.Module):
-    def __init__(self, input_dim=3, hidden_dim=128):
+    def __init__(self, input_dim=5, hidden_dim=128):
         super(ConceptEBM, self).__init__()
         self.feature_net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
