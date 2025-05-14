@@ -26,8 +26,9 @@ import numpy as np
 import random
 import pickle
 import tqdm
+import matplotlib.pyplot as plt
 
-COLOURS = ['red', 'green', 'blue']
+COLOURS = ['red', 'green', 'blue', 'yellow']
 
 
 class RandomPointsDataGenerator:
@@ -62,27 +63,27 @@ class RandomPointsDataGenerator:
         return concept_str
 
     def generate_data(self, save=True):
-        for _ in tqdm.tqdm(range(self.data_size), desc="Generating data", unit="data"):
+        while len(self.data_and_labels) < self.data_size:
             # Generate random points
             points = []
             for _ in range(self.num_points):
-                x = random.uniform(0, 10)
-                y = random.uniform(0, 10)
+                x = random.uniform(-1, 1)
+                y = random.uniform(-1, 1)
                 colour = random.choice(np.arange(len(COLOURS)))
                 points.append([x, y, colour])
             points = np.array(points)
             # Generate random observer position
-            observer_x = random.uniform(0, 10)
-            observer_y = random.uniform(0, 10)
+            observer_x = random.uniform(-1, 1)
+            observer_y = random.uniform(-1, 1)
             observer = np.array([observer_x, observer_y])
             # Generate labels
             labels = []
             for i in range(self.num_points):
                 point = points[i]
                 distance = np.linalg.norm(point[:2] - observer)
-                if distance < 3:
+                if distance < 0.3:
                     labels.append([0, point[2]])
-                elif distance > 5:
+                elif distance > 0.7:
                     labels.append([1, point[2]])
                 if point[0] < observer[0]:
                     labels.append([2, point[2]])
@@ -100,8 +101,36 @@ class RandomPointsDataGenerator:
             labels = np.unique(labels, axis=0)
             # labels = labels + noise
             # self.data_and_labels.append((points, observer, labels))
+            # remove opposite labels for example: being left and right at the same time for some colour
+            indices_to_remove = np.zeros(labels.shape[0], dtype=bool)
+            for i in range(len(labels)):
+                if labels[i][0] == 2:
+                    if [3., labels[i][1]] in labels.tolist():
+                        indices_to_remove[i] = True
+
+                elif labels[i][0] == 3:
+                    if [2., labels[i][1]] in labels.tolist():
+                        indices_to_remove[i] = True
+
+                elif labels[i][0] == 4:
+                    if [5., labels[i][1]] in labels.tolist():
+                        indices_to_remove[i] = True
+                elif labels[i][0] == 5:
+                    if [4., labels[i][1]] in labels.tolist():
+                        indices_to_remove[i] = True
+            labels = labels[~indices_to_remove]
+
+            if len(labels) == 0:
+                continue
+
             for label in labels:
                 self.data_and_labels.append((points, observer, label))
+
+            # show scatter plot of points and observer
+            # plt.scatter(points[:, 0], points[:, 1], c=[COLOURS[int(p[2])] for p in points])
+            # plt.scatter(observer[0], observer[1], c='black', marker='x')
+            # plt.show()
+            
         # Save data and labels to file
         if save:
             os.makedirs(self.data_directory, exist_ok=True)
@@ -115,7 +144,7 @@ class RandomPointsDataGenerator:
 if __name__ == "__main__":
     data_directory = "../data"
     data_file = "random_points_data.pkl"
-    data_size = 10000
+    data_size = 1000000
     num_points = 5
 
     generator = RandomPointsDataGenerator(data_directory, data_file, data_size, num_points)
