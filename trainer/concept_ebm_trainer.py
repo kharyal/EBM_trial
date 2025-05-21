@@ -13,6 +13,7 @@ from buffers.buffer import Buffer
 import tqdm
 from data_generator.random_points_data_generator import RandomPointsDataGenerator, COLOURS
 import matplotlib.pyplot as plt
+from copy import deepcopy
 
 class ConceptEBMTrainer:
     def __init__(self, dataset, args):
@@ -23,37 +24,84 @@ class ConceptEBMTrainer:
         self.model.to(self.device)
         self.args = args
         self.buffer = Buffer(args.buffer_size)
-        self.viz_data_generator = RandomPointsDataGenerator(None, None, 9, 5)
+        self.viz_data_generator = RandomPointsDataGenerator(None, None, 15, 5)
         self.viz_data = self.viz_data_generator.generate_data(save=False)
 
+    def _sample_from_buffer(self, inputs, sample_concept=True):
+        xs, observer, concept = inputs
+        '''
+            if sample concept is True, then replace 30% of the concept with samples from the buffer
+            else, replace 30% of the observer with samples from the buffer
+        '''
+        batch_size = xs.shape[0]
+
+        if not len(self.buffer) > batch_size:
+            return inputs
+        r = np.random.rand(batch_size)>0.5
+        buffer_samples = deepcopy(self.buffer.sample(batch_size))
+        if sample_concept:
+            # sample from the buffer
+            concept_ = []
+            for i in range(batch_size):
+                if r[i]:
+                    concept_.append(buffer_samples[i][1].to(self.device))
+                else:
+                    concept_.append(concept[i])
+            concept = torch.stack(concept_, dim=0)
+            return xs, observer, concept
+        else:
+            # sample from the buffer
+            observer_ = []
+            for i in range(batch_size):
+                if r[i]:
+                    observer_.append(buffer_samples[i][0].to(self.device))
+                else:
+                    observer_.append(observer[i])
+            observer = torch.stack(observer_, dim=0)
+            return xs, observer, concept
+    
+    def _add_to_buffer(self, inputs):
+        observer, concept = inputs
+        observer, concept = observer.clone().detach(), concept.clone().detach()
+        for i in range(observer.shape[0]):
+            self.buffer.push([observer[i].cpu(), concept[i].cpu()])
+
     def langevin(self, neg, over_concepts = True):
+        step_lr = self.args.step_lr
         xs, observer, concept = neg
         if over_concepts:
             noise = torch.randn_like(concept.float()).detach()
         else:
             noise = torch.randn_like(observer).detach()
         negs_samples = []
+        observer_init = observer.clone().detach()
     
         for i in range(self.args.num_langevin_steps):
+            step_lr = step_lr
             noise.normal_()
             if over_concepts:
-                concept = concept.clone().float()
+                concept = concept.clone().float() + noise
                 concept.requires_grad_(requires_grad=True)
             else:
-                observer = observer.clone().float()
+                observer = observer.clone().float() + noise
                 observer.requires_grad_(requires_grad=True)
+                # if i == self.args.num_langevin_steps - 1:
+                    # print(observer-observer_init)
             
             xs_ = xs.clone().detach()
 
             energy = self.model(xs_, observer, concept)
 
             _grad = torch.autograd.grad([energy.sum()], [observer if not over_concepts else concept])[0]
+            # if i == self.args.num_langevin_steps - 1:
+                # print(_grad.norm(dim=1).mean())
+                # print(_grad.norm(dim=1).shape)
 
 
             if over_concepts:
-                concept = concept - self.args.step_lr * _grad  + (noise*0.01)
+                concept = concept - step_lr * _grad
             else:
-                observer = observer - self.args.step_lr * _grad + (noise*0.01)
+                observer = observer - step_lr * _grad
 
             observer_kl = observer.clone().detach().float().requires_grad_(requires_grad=True)
             concept_kl = concept.clone().detach().float().requires_grad_(requires_grad=True)
@@ -65,10 +113,12 @@ class ConceptEBMTrainer:
                     _grad = torch.autograd.grad([energy.sum()], [observer_kl if not over_concepts else concept_kl], 
                                                 create_graph=True)[0]
                     if over_concepts:
-                        concept_kl = concept_kl - self.args.step_lr * _grad
+                        concept_kl = concept_kl - step_lr * _grad
                         concept_kl = concept_kl.clamp(0, 1)
                     else:
-                        observer_kl = observer_kl - self.args.step_lr * _grad
+                        observer_kl = observer_kl - step_lr * _grad
+                        # print grad norm
+                        # print(_grad.norm())
                         observer_kl = observer_kl.clamp(-1, 1)
 
             # clip observer between 0 and 10
@@ -107,31 +157,41 @@ class ConceptEBMTrainer:
         acc, samples, gt_acc = 0, 0, 0
         progress_bar = tqdm.tqdm(range(len(self.dataset[mode])), desc=f"Epoch: {epoch}", unit="batch")
         for i, (batch_xs, batch_observer, batch_concept) in zip(progress_bar, self.dataset[mode]):
-            batch_xs = batch_xs.to(self.device)
-            batch_observer = batch_observer.to(self.device)
-            batch_concept = batch_concept.to(self.device)
+            batch_xs = batch_xs.to(self.device) + 0.01*torch.randn_like(batch_xs.float()).to(self.device)
+            batch_observer = batch_observer.to(self.device) + 0.01*torch.randn_like(batch_observer.float()).to(self.device)
+            batch_concept = (batch_concept + 0.01*torch.randn_like(batch_concept.float())).to(self.device)
             inputs = self._prepare_input(batch_xs, batch_observer, batch_concept)
+            inputs_ = deepcopy(inputs)
+            inputs_['neg'] = self._sample_from_buffer(inputs_['neg'], sample_concept=True)
+            neg_con, neg_con_kl, _ = self.langevin(inputs_['neg'], over_concepts=True)
 
-            neg_con, neg_con_kl, _ = self.langevin(inputs['neg'], over_concepts=True)
-            neg_xs, neg_xs_kl, _ = self.langevin(inputs['neg'], over_concepts=False)
+            inputs_= deepcopy(inputs)
+            inputs_['neg'] = self._sample_from_buffer(inputs_['neg'], sample_concept=False)
+            neg_xs, neg_xs_kl, _ = self.langevin(inputs_['neg'], over_concepts=False)
 
             energy_pos = self.model(*inputs['pos'])
             energy_neg_con = self.model(*neg_con)
             energy_neg_xs = self.model(*neg_xs)
 
-            # loss = torch.mean(energy_pos) - torch.mean(energy_neg_xs)
-            loss = 2*torch.mean(energy_pos) - torch.mean(energy_neg_con) - torch.mean(energy_neg_xs)
-            loss += 2*(energy_pos**2).mean() + (energy_neg_con**2).mean() + (energy_neg_xs**2).mean()
-            # loss += (energy_pos**2).mean() + (energy_neg_xs**2).mean()
+            # self._add_to_buffer([neg_xs[1], neg_con[2]])
+
+            loss = 0
+            loss1 = torch.mean(energy_pos) - torch.mean(energy_neg_xs)
+            # loss = 2*torch.mean(energy_pos) - (torch.mean(energy_neg_con/20) - torch.mean(energy_neg_xs))/2
+            # loss += (energy_pos**2).mean() + (((energy_neg_con/10)**2).mean() + (energy_neg_xs**2).mean())/2
+            # loss += torch.abs(energy_pos).mean() + (torch.abs(energy_neg_con).mean() + torch.abs(energy_neg_xs).mean())/2
+            loss2 = 0.5*(energy_pos**2).mean() + (energy_neg_xs**2).mean()
 
             # kl loss
             self.model.requires_grad_(False)
-            loss_kl = torch.mean(self.model(*neg_con[:2], neg_con_kl[2])) + torch.mean(self.model(neg_xs[0], neg_xs_kl[1], neg_xs[2]))
-            # loss_kl = torch.mean(self.model(*neg_xs_kl))
+            # loss_kl = (torch.mean(self.model(*neg_con[:2], neg_con_kl[2])/20) + torch.mean(self.model(neg_xs[0], neg_xs_kl[1], neg_xs[2])))/2
+            loss_kl = torch.mean(self.model(*neg_xs_kl))
             self.model.requires_grad_(True)
 
-            loss = loss + self.args.kl_weight * loss_kl
+            loss += self.args.kl_weight * loss_kl
 
+            # loss = loss1 + loss2 + los3
+            loss = loss1 + loss2
             if mode == 'train':
                 self.optimizer.zero_grad()
                 loss.backward()
@@ -144,10 +204,13 @@ class ConceptEBMTrainer:
 
             training_stats = {
                 "loss": f"{loss.item():+.2f}",
+                # "loss1": f"{loss1.item():+.2f}",
+                # "loss2": f"{loss2.item():+.2f}",
+                # "loss_kl": f"{loss_kl.item():+.2f}",
                 "energy_pos": f"{energy_pos.mean().item():+.2f}",
-                # "energy_neg_con": f"{energy_neg_con.mean().item():+.2f}",
+                "energy_neg_con": f"{energy_neg_con.mean().item():+.2f}",
                 "energy_neg_xs": f"{energy_neg_xs.mean().item():+.2f}",
-                # "energy_diff_con": f"{(energy_pos - energy_neg_con).mean().item():+.2f}",
+                "energy_diff_con": f"{(energy_pos - energy_neg_con).mean().item():+.2f}",
                 "energy_diff_xs": f"{(energy_pos - energy_neg_xs).mean().item():+.2f}",
             }
             progress_bar.set_postfix(training_stats)
@@ -205,7 +268,7 @@ class ConceptEBMTrainer:
                 for idx, gp in enumerate(grid_points):
                     energy = self.model(points_.clone().detach().unsqueeze(0), gp.unsqueeze(0), label)
                     gp = gp.cpu().numpy()
-                    energies[idx % num_samples, idx // num_samples] = energy.detach().cpu().numpy()
+                    energies[idx // num_samples, idx % num_samples] = energy.detach().cpu().numpy()
 
             # plot the energy
             # plt.imshow(energies, extent=(grid_xmin, grid_xmax, grid_ymin, grid_ymax), origin='lower', aspect='auto')

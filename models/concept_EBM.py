@@ -8,7 +8,7 @@ takes a set of 5 points and a concept as input, outputs the energy
 '''
 
 class ConceptEBM(nn.Module):
-    def __init__(self, input_dim=5, hidden_dim=128):
+    def __init__(self, input_dim=13, hidden_dim=128):
         super(ConceptEBM, self).__init__()
         self.feature_net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
@@ -45,14 +45,24 @@ class ConceptEBMMLP(nn.Module):
         super(ConceptEBMMLP, self).__init__()
         self.feature_net = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
-            nn.LeakyReLU()
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
         )
         self.attention_net = nn.Sequential(
             nn.Linear(input_dim, 1),
-            nn.Sigmoid(),
+            nn.Tanh(),
         )
         self.g_net = nn.Sequential(
             nn.Linear(hidden_dim + 10, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.LeakyReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.LeakyReLU(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.LeakyReLU(),
@@ -68,10 +78,11 @@ class ConceptEBMMLP(nn.Module):
         x = torch.cat((x, concept_), dim=-1)
         x_ = self.feature_net(x)
         attn = self.attention_net(x)
-        x = x_ * attn
+        x = x_ * (0.5*attn+0.5)
+        # x = x_
         
-        x = x.view(batch_size, num_points, -1).mean(dim=1)
+        x = x.view(batch_size, num_points, -1).sum(dim=1)
 
         x = torch.cat((x, concept), dim=-1)
         x = self.g_net(x)
-        return x
+        return 5*x
